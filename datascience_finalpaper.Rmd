@@ -1,0 +1,815 @@
+---
+title: "Using Machine Learning to Predict Rising Sea Levels"
+author: "Dante Miller and Machi Iwata"
+date: "12/12/2021"
+output: pdf_document
+---
+
+# Project Background
+
+The purpose of this study is to better understand whether we can accurately predict future global mean and regional sea level values using previous values and shared relationships. Our interests in this study stems from rising sea levels having a direct impact on our daily lives as the majority of coastal cities in the world would be severely affected by rising sea levels. By using univariate and multivariate long short-term memory neural networks, we created models for data on global mean and regional sea levels to determine whether we can accurately predict the sea level values. This study could potentially allow us to understand how rising sea levels in different sea regions and the global mean of the seas will increase.
+
+# Data Explanation
+
+The data used in this study was attained from the NOAA/STAR Laboratory for Satellite Altimetry, and came in 25 different comma-separated values files. Each comma-separated values file contained four variables, TOPEX/Poseidon, Jason-1, Jason-2, and Jason-3 which are four different satellites used to estimate the global mean and regional sea levels across time.
+
+# Data Manipulation
+
+During the data manipulation phase, we had to get the data into usable format for the rest of the study. We started off by creating a new variable for each of the csv files based on the mean for the four satellite variables. We then proceeded to manipulate the time index for each of the csv files to be monthly based instead of daily. After, we aggregated the new variable for each csv file together into a new dataset. Finally, we split the new dataset into two, one being just the global mean sea level, and the other being the 24 regional sea levels. During this process, no data was removed but transformed. The techniques use transformations such as MinMaxScaler and StandardScaler which are functions that normalize data between the range of (-1,1). 
+
+# Data Exploration
+
+In the data manipulation phase, we explored the data through a correlation plot, box plots, and time series plots. In Figure 1, the correlation plot gives us a glimpse at the correlation between the regional sea variables. For the most part, the regional sea level variables have moderate to high level of correlation and occasionally no correlation with each other. In Figure 2 - Figure 3, the box plots gives us a glimpse at the data distribution. The range of where majority of the values are located seems to differ for each of the sea regions. Outliers can also be noticed in the regional seas such as adriantic sea, andaman sea, baltic sa, bay of bengal, mediterranean sea, north sea, persian gulf, sea of japan, and the yellow sea but there are none in the global mean sea level box plot. In Figure 4 - Figure 8, the time series plots gives us a glimpse at the values for each variable across time. The global mean sea level plot seems to be increasing but constantly fluctuating which is similar for majority of the regional sea level plots.
+
+
+
+
+```{r setup, include=FALSE}
+library(keras)
+tensorflow::set_random_seed(1234)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(comment = NA)
+```
+
+```{r, echo=FALSE,message=FALSE , warning=FALSE,include=FALSE}
+# importing packages
+library(reticulate)
+matplotlib <- import("matplotlib")
+matplotlib$use("Agg", force = TRUE)
+#install.packages("reticulate")
+library(reticulate)
+library(readr)
+library(Hmisc)
+library(corrplot)
+library(rcompanion)
+library(zoo)
+library(ggplot2)
+#reticulate::install_miniconda() # need the first time
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,include=FALSE}
+library(lubridate)
+turn_year_decimal_into_date <- function(dataset){
+  year_dataset <- format(date_decimal(dataset$year),"%d-%m-%Y") # creating a new dataset based on variable year for the provided dataset after changing the format for the variable year
+  return(year_dataset) # return new dataset
+}
+```
+
+```{python, echo=FALSE,message=FALSE , warning=FALSE,include=FALSE}
+
+# import packages
+
+import pandas as pd
+import glob 
+import re
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+pd.options.mode.chained_assignment = None  # default='warn'
+
+# create dataframe
+
+dataframe = pd.DataFrame()
+
+# create mean function which puts all the csv files into one dataset
+
+def mean_function(file_name,file):
+  name = re.findall(r'([^\/]+)\.',file_name)[0] # getting rid of .csv in the file name
+  file.iloc[:,1] = file.iloc[:,[1,2,3,4]].mean(axis=1) # taking the mean of the 4 columns and putting them into one column
+  year_dataset = r.turn_year_decimal_into_date(file) # calling function mentioned earlier
+  copy_file = file.iloc[:,[0,1]] # creating a dataset based on the column that took the mean of all the columns
+  copy_file["year"] = year_dataset # created a variable year = to the year dataset
+  copy_file = copy_file.set_index('year') # change the index of the dataset to be the year variable
+  copy_file.columns.values[0] = name # changed the column name
+  copy_file.index = pd.to_datetime(copy_file.index) # changed data type of index in datatime
+  resampled_data = copy_file.resample('1M').mean() # changed the date indexes to be based on months
+  dataframe[name] = resampled_data.iloc[:,0] # create a new variable in dataframe to equal the resample_data
+  
+  
+#from sklearn.preprocessing import MinMaxScaler
+#from keras.models import Sequential
+#from keras.layers import Dense,LSTM
+```
+
+```{r ,echo=FALSE,message=FALSE, warning=FALSE,include=FALSE}
+# setting wd
+
+
+# setting all the file names equaled to all the files in the wd
+
+file_names <- list.files(pattern=".csv") 
+
+# find all files with csv
+# function calls the mean function in python using files names and read_csv
+
+appending_datasets <- function(file_names) {
+  py$mean_function(file_names,read_csv(file_names))
+}
+
+# using lapply on the files names with the function appending datasets
+
+invisible(lapply(file_names,appending_datasets))
+
+# setting dataframe equal to the dataframe in python
+
+dataframe = py$dataframe
+
+# omitting the nas from the dataframe
+
+dataframe <- na.omit(dataframe)
+
+# splitting into separate dataframes
+
+dataframe_global <- dataframe["global-mean-sea-level"]
+cols_remove <- c("global-mean-sea-level")
+dataframe_regional <- dataframe[, !(colnames(dataframe) %in% cols_remove)]
+```
+
+
+```{r,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Corrplot of regional sea level values."}
+corrplot(cor(dataframe_regional), tl.cex=0.5,diag = FALSE,type = 'lower')
+```
+\newpage
+```{r,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Boxplot of global sea level values."}
+boxplot(dataframe_global$`global-mean-sea-level`,main="Boxplot of global mean sea level",ylab ="Sea Level") 
+```
+\newpage
+```{r,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Box plot of regional sea level values."}
+par(mfrow=c(2,2))    # set the plotting area into a 1*2 array
+boxplot(dataframe_regional[0:6],ylab ="Sea Level",xlab = NULL, xaxt = 'n')
+axis(1, labels = FALSE)    # add tick marks
+text(x = seq_along(colnames(dataframe_regional[0:6])), y = -200, labels = colnames(dataframe_regional[0:6]), 
+     srt = 35,    # rotate
+     adj = 1,    # justify
+     xpd = TRUE)    # plot in margin
+boxplot(dataframe_regional[7:12],ylab ="Sea Level",xlab = NULL, xaxt = 'n')
+axis(1, labels = FALSE)    # add tick marks
+text(x = seq_along(colnames(dataframe_regional[7:12])), y = -150, labels = colnames(dataframe_regional[7:12]), 
+     srt = 35,    # rotate
+     adj = 1,    # justify
+     xpd = TRUE)    # plot in margin
+boxplot(dataframe_regional[13:18],ylab ="Sea Level",xlab = NULL, xaxt = 'n')
+axis(1, labels = FALSE)    # add tick marks
+text(x = seq_along(colnames(dataframe_regional[13:18])), y = -125, labels = colnames(dataframe_regional[13:18]), 
+     srt = 35,    # rotate
+     adj = 1,    # justify
+     xpd = TRUE)    # plot in margin
+boxplot(dataframe_regional[19:24],ylab ="Sea Level",xlab = NULL, xaxt = 'n')
+axis(1, labels = FALSE)    # add tick marks
+text(x = seq_along(colnames(dataframe_regional[19:24])), y = -125, labels = colnames(dataframe_regional[19:24]), 
+     srt = 35,    # rotate
+     adj = 1,    # justify
+     xpd = TRUE)    # plot in margin
+```
+\newpage
+```{r,echo=FALSE,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Time series plot of global sea level values."}
+index = 0
+ts.plot(ts(dataframe_global),ylab="global-mean-sea-level")
+```
+\newpage
+
+```{r,echo=FALSE,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Time series plot of regional sea level values."}
+par(mfrow=c(3,2)) 
+for(var in (index+1):6){
+  index = index + 1
+  ts.plot(ts(dataframe_regional)[,index],ylab=colnames(dataframe_regional)[index] )
+}
+```
+\newpage
+```{r,echo=FALSE,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Time series plot of regional sea level values."}
+par(mfrow=c(3,2)) 
+for(var in (index+1):12){
+  index = index + 1
+  ts.plot(ts(dataframe_regional)[,index],ylab=colnames(dataframe_regional)[index] )
+}
+```
+\newpage
+```{r,echo=FALSE,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Time series plot of regional sea level values."}
+par(mfrow=c(3,2)) 
+for(var in (index+1):18){
+  index = index + 1
+  ts.plot(ts(dataframe_regional)[,index],ylab=colnames(dataframe_regional)[index] )
+}
+```
+\newpage
+```{r,echo=FALSE,echo=FALSE,fig.align="center",echo=FALSE, fig.cap="Time series plot of regional sea level values."}
+par(mfrow=c(3,2)) 
+for(var in (index+1):24){
+  index = index + 1
+  ts.plot(ts(dataframe_regional)[,index],ylab=colnames(dataframe_regional)[index] )
+}
+```
+\newpage
+
+# Techniques
+
+In this study, we compared the forecasting prediction accuracy of the future global mean and regional sea level values through the application of univariate and multivariate long short-term memory neural networks. Long short-term memory neural networks are an artificial neural network with multiple layers that depend on prior
+elements in the sequence between the input and output layers and can account for learning long-term temporal dependencies. To perform this study, we used the programming languages, R and Python in an integrated development environment known as RStudio.
+
+
+## Machine Learning Method
+
+In this study, we employed univariate and multivariate long short-term memory neural networks to forecast future global mean and regional sea level values. Before the application of the methods, we had to normalize the data between the range of (-1,1) using two functions MinMaxScaler and StandardScaler. We then created our models based on three training sets (70%, 80%, and 90%). The models were used to predict the global mean and regional sea levels, and the predicted values were then renormalized. 
+
+## Forecast Evaluations
+
+In this study, we compared the prediction accuracy of the future global mean and regional sea level values with the actual values for three different training sets (70%, 80%, and 90% for each of level). The three predictive measures used to measure the prediction accuracy are mean absolute error,
+$$\frac{1}{n}\sum_{i=1}^{n}{\lvert y_i - \hat{y_i}\lvert}$$
+
+root mean square error, and 
+$$\sqrt{\frac{\sum_{i=1}^{n}{(y_i - \hat{y_i})^2}}{n}}$$
+mean absolute percentage error
+$$\frac{1}{n}\sum_{i=1}^{n}\mid \frac{y_i-\hat{y_i}}{y_i}\mid$$
+
+# Results
+
+In our model developement phase, the univariate and multivariate long short-term memory neural networks had different features. The univariate long short-term memory neural networks had one hidden layer, 256 epochs, and 64 batches. The multivariate long short-term memory neural networks had four hidden layers, 128 epochs, and 64 batches. Epochs refers to the amount of times the learning algorithm goes through the provided training set and batches is the number of training examples in one forward/backward pass.
+
+In the metric tables shown in Table 1 - Table 4, the results are shown to be consistent across the global mean and regional sea levels. The low values show that the sea level prediction accuracy is somewhat consistent. When looking at the training percentages, it can be noticed that the 90 percent training level produced better results compared to the 70 and 80 percent training levels due to its lower values. These results can also be noticed when looking at the sea level predicted vs actual plots shown in Figure 9 - Figure 12 as the 90 percent training predicted vs actual plots do not overlap for the most part possibly due to not having enough testing data.
+
+
+
+```{python, results="hide",include=FALSE}
+import numpy as np
+my_seed = 20 #5
+np.random.seed(my_seed)
+import random 
+random.seed(my_seed)
+import tensorflow as tf
+tf.random.set_seed(my_seed)
+import pandas as pd
+import matplotlib.pyplot as plt
+import math
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import Dense,LSTM
+from sklearn.metrics import mean_squared_error,mean_absolute_error,mean_absolute_percentage_error
+from keras.layers import Dropout
+from sklearn.preprocessing import StandardScaler
+# creating a dataset matrix
+def create_dataset(dataset, look_back=1):
+    dataX, dataY = [], []
+    for i in range(len(dataset) - look_back ):
+        a = dataset[i:(i + look_back):]
+        dataX.append(a)
+        dataY.append(dataset[i + look_back, :])
+    return np.array(dataX), np.array(dataY)
+
+# returns the dataset with new column names
+def returndataset(arraywithstuff,columns):
+    dataset = pd.DataFrame(columns = columns)
+    i = 0
+    for name in columns:
+        dataset[name] = arraywithstuff[:,i]
+        i = i + 1
+    return dataset
+def multivariate_lstm(dataset):
+    # create dictionaries
+    actual_dictionary = {}
+    multivariate_lstm_dictionary = {}
+    #create variable equal to the values in the dataset provided
+    values = dataset.values
+    # created a scaler between the range of -1 and 1
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    # used the scaler to transform the dataset values
+    scaled = scaler.fit_transform(values)
+    # for creating training and testing set
+    number = [0.7,0.8,0.9]
+    for n in number:
+        # create a variable equal to the number of columns in dataset
+        look_back = 24
+        # creating testing and training sets
+        train_set = scaled[:math.floor(n*len(scaled)),:]
+        test_set = scaled[math.floor(n*len(scaled)):,:]
+        # splitting training and testing sets into x and y versions
+        trainX, trainY = create_dataset(train_set, look_back)  
+        testX, testY = create_dataset(test_set, look_back)
+        # creating model
+        model = Sequential()
+        model.add(LSTM(256, input_shape=(24,24)))
+        model.add(Dense(24))
+        model.compile(loss='mae', optimizer='adam')
+        # fitting the model
+        history = model.fit(trainX, trainY, epochs=128, batch_size=64, validation_data=(testX, testY))
+        # making predictions
+        trainPredict = model.predict(trainX)
+        testPredict = model.predict(testX)
+        # inversing the transformation
+        #trainPredict_extended = scaler.inverse_transform(trainPredict)
+        testPredict_extended = scaler.inverse_transform(testPredict)
+        #trainYActual_extended = scaler.inverse_transform(trainY)
+        testYActual_extended = scaler.inverse_transform(testY)
+        #trainPredict_extended = returndataset(trainPredict_extended)
+        # returning the predictions as a dataset
+        testPredict_extended = returndataset(testPredict_extended,dataset.columns)
+        #trainYActual_extended = returndataset(trainYActual_extended)
+        testYActual_extended = returndataset(testYActual_extended,dataset.columns)
+        # putting the predictions and actuals in the dictionaries
+        multivariate_lstm_dictionary[n*100] = testPredict_extended
+        actual_dictionary[n*100] = testYActual_extended
+    return multivariate_lstm_dictionary,actual_dictionary
+def lstm(X_train, y_train, X_test,sc):
+    model = Sequential()
+    #Adding the first LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 256, return_sequences = True, input_shape = (X_train.shape[1], 1)))
+    model.add(Dropout(0.2))
+    # Adding a second LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 128, return_sequences = True))
+    model.add(Dropout(0.2))
+    # Adding a third LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 32, return_sequences = True))
+    model.add(Dropout(0.2))
+    # Adding a fourth LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 32))
+    model.add(Dropout(0.2))
+    # Adding the output layer
+    model.add(Dense(units = 1))
+    # Compiling the RNN
+    model.compile(optimizer = 'adam', loss = 'mean_squared_error')
+    # Fitting the RNN to the Training set
+    model.fit(X_train, y_train, epochs = 256, batch_size = 64)
+    # making predictions
+    LSTM_prediction = model.predict(X_test)
+    return model, LSTM_prediction
+def lstm_model(dataset):
+    # creating dictionaries
+    actual_dictionary = {}
+    lstm_dictionary = {}
+    lstm_dictionary[0.7*100] = {}
+    lstm_dictionary[0.8*100] = {}
+    lstm_dictionary[0.9*100] = {}
+    actual_dictionary[0.7*100] = {}
+    actual_dictionary[0.8*100] = {}
+    actual_dictionary[0.9*100] = {}
+    # going through the columns and numbers used for creating training and testing sets
+    for column in dataset.columns:
+        number = [0.7,0.8,0.9]
+        scr = []
+        for n in number:
+            # Split into train and test set
+            train_size = math.floor(n*len(dataset[column]))
+            train_set = dataset[column].head(train_size).values.reshape(-1,1)
+            test_set = dataset[column].tail(len(dataset[column]) - train_size).values.reshape(-1,1)
+            test_size = len(test_set)
+            # Scaler
+            sc = StandardScaler()
+            ts_train_scaled = sc.fit_transform(train_set)
+            # Splitting the training set further
+            X_train = []
+            y_train = []
+            y_train_stacked = []
+            for i in range(5,train_size-1): 
+                X_train.append(train_set[i-5:i,0])
+                y_train.append(train_set[i:i+1,0])
+            X_train, y_train = np.array(X_train), np.array(y_train)
+            # changing the shape of X_train
+            X_train = np.reshape(X_train, (X_train.shape[0],X_train.shape[1],1))
+            # creating a dataset used for predictions
+            inputs = pd.concat((dataset[column].head(train_size),dataset[column].tail(len(dataset[column]) - train_size)),axis=0).values
+            inputs = inputs[len(inputs)-len(test_set) - 5:]
+            inputs = inputs.reshape(-1,1)
+            inputs  = sc.transform(inputs)
+            # turning the dataset into a matrix
+            X_test = []
+            for i in range(5,test_size+5-1):
+                X_test.append(inputs[i-5:i,0])
+            # creating a matrix of the X_test and changing the shape
+            X_test = np.array(X_test)
+            X_test = np.reshape(X_test, (X_test.shape[0],X_test.shape[1],1))
+            # Creates model
+            model, model_predictions = lstm(X_train, y_train, X_test,sc)
+            model.summary()
+            # creating dataset based on actual and predicted values
+            actual_pred = pd.DataFrame(columns = ['actual', 'prediction'])
+            actual_pred['actual'] = dataset[column].tail(len(dataset[column]) - train_size)[0:len(model_predictions)]
+            actual_pred['prediction'] = model_predictions[:,0]
+            # putting the inverse of the predictions and actual values in the dictionaries
+            lstm_dictionary[n*100][column] = sc.inverse_transform(actual_pred['prediction'])
+            actual_dictionary[n*100][column] = actual_pred['actual']
+    return lstm_dictionary,actual_dictionary
+```
+
+```{r, results="hide",include=FALSE}
+regional_dictionary = py$multivariate_lstm(dataframe_regional)
+global_dictionary  = py$lstm_model(dataframe_global)
+
+actual_regional_dictionary = regional_dictionary[2]
+regional_dictionary = regional_dictionary[1]
+
+actual_global_dictionary = global_dictionary[2]
+global_dictionary = global_dictionary[1]
+```
+
+```{python,echo = FALSE,warnings=FALSE}
+from sklearn.metrics import mean_squared_error,mean_absolute_error,mean_absolute_percentage_error
+global_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_seventy_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_eighty_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_ninty_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+for i in ["70.0","80.0","90.0"]:
+    global_table = global_table.append(pd.DataFrame({"MAD":mean_absolute_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"]),"RMSE":mean_squared_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"]),"MAPE":mean_absolute_percentage_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"])}, index=[i]))
+   
+    
+fig, (ax1, ax2,ax3) = plt.subplots(3)
+st = fig.suptitle("Sea level predicted vs actual plots for" +"\n" + "global mean sea level at the 70, 80, and 90 percent training level.")
+ax1.plot(((r.actual_global_dictionary[0]["70.0"])["global-mean-sea-level"].reset_index())["actual"],label = "Actual Values")
+ax1.plot((r.global_dictionary[0]["70.0"])["global-mean-sea-level"], label= "Predicted Values")
+ax1.legend(loc='best')
+ax2.plot(((r.actual_global_dictionary[0]["80.0"])["global-mean-sea-level"].reset_index())["actual"],label = "Actual Values")
+ax2.plot((r.global_dictionary[0]["80.0"])["global-mean-sea-level"], label= "Predicted Values")
+ax2.legend(loc='best')
+ax3.plot(((r.actual_global_dictionary[0]["90.0"])["global-mean-sea-level"].reset_index())["actual"],label = "Actual Values")
+ax3.plot((r.global_dictionary[0][i])["global-mean-sea-level"], label= "Predicted Values")
+ax3.legend(loc='best')
+fig.tight_layout()
+st.set_y(0.95)
+fig.subplots_adjust(top=0.85)
+#plt.show()
+plt.savefig('global-mean-sea-level'+'.png')
+plt.clf()
+```
+\newpage
+```{python,echo = FALSE,warnings=FALSE}
+for name in ["tropics","caribbean-sea","gulf-of-mexico"]:
+  fig, (ax1, ax2,ax3) = plt.subplots(3,constrained_layout=True)
+  st = fig.suptitle("Sea level predicted vs actual plots for " + name.replace("_", " ") + "\nat the 70, 80, and 90 percent training level.")
+  ax1.plot(r.actual_regional_dictionary[0]["70.0"][name],label = "Actual Values")
+  ax1.plot(r.regional_dictionary[0]["70.0"][name], label= "Predicted Values")
+  ax1.legend(loc='best')
+  ax2.plot(r.actual_regional_dictionary[0]["80.0"][name],label = "Actual Values")
+  ax2.plot(r.regional_dictionary[0]["80.0"][name], label= "Predicted Values")
+  ax2.legend(loc='best')
+  ax3.plot(r.actual_regional_dictionary[0]["90.0"][name],label = "Actual Values")
+  ax3.plot(r.regional_dictionary[0]["90.0"][name], label= "Predicted Values")
+  ax3.legend(loc='best')
+  fig.tight_layout()
+  st.set_y(0.95)
+  fig.subplots_adjust(top=0.85)
+  #plt.show()
+  plt.savefig(name+'.png')
+  plt.clf()
+for i in ["70.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_seventy_table = regional_seventy_table.append(pd.DataFrame({"MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),"MAPE":mean_absolute_percentage_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name])}, index=[name]))
+for i in ["80.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_eighty_table = regional_eighty_table.append(pd.DataFrame({"MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),"MAPE":mean_absolute_percentage_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name])}, index=[name]))
+for i in ["90.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_ninty_table = regional_ninty_table.append(pd.DataFrame({"MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name],squared=False),"MAPE":mean_absolute_percentage_error(r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name])}, index=[name]))
+    
+```
+\newpage
+```{r plotone, fig.align="center",echo=FALSE, fig.cap="Global mean sea level predicted vs actuals."}
+knitr::include_graphics("global-mean-sea-level.png")
+```
+\newpage
+```{r plottwo, fig.align="center",echo=FALSE, fig.cap="Tropics predicted vs actuals."}
+knitr::include_graphics("tropics.png")
+```
+\newpage
+```{r plotthree, fig.align="center",echo=FALSE, fig.cap="Caribbean sea predicted vs actuals."}
+knitr::include_graphics("caribbean-sea.png")
+```
+\newpage
+```{r plotfour, fig.align="center",echo=FALSE, fig.cap="Gulf of mexico predicted vs actuals."}
+knitr::include_graphics("gulf-of-mexico.png")
+```
+
+
+```{r,echo = FALSE}
+knitr::kable(py$global_table,caption = "Metric table for global mean sea levels predicted vs actuals.",caption.placement = "bottom")
+```
+```{r,echo = FALSE}
+knitr::kable(py$regional_seventy_table,caption = "Metric table for regional sea levels predicted vs actuals at 70% training level.",caption.placement = "bottom")
+```
+```{r,echo = FALSE}
+knitr::kable(py$regional_eighty_table,caption = "Metric table for regional sea levels predicted vs actuals at 80% training level.",caption.placement = "bottom")
+```
+```{r,echo = FALSE}
+knitr::kable(py$regional_ninty_table,caption = "Metric table for regional sea levels predicted vs actuals at 90% training level.")
+```
+
+# Conclusion
+
+Previously, we mentioned that the global mean and regional sea levels predicted vs actuals at the 70 and  80 percent training levels are somewhat accurate. There are times where the predicted vs actuals do not overlap but for the most part they do which suggests that are models at the 70 and 80 percent training levels are somewhat accurate. This seems to be different for the 90 percent training level level because earlier we mentioned that when looking at Table 1 - Table 4, the results look better but when looking at Figure 9 - Figure 12, the results are shown to differ as they do not overlap for the most part. This is possibly due to not having enough testing data so we truly do not know how good the 90 percent training level models are. Our results from this study suggest that univariate and multivariate long short-term memory neural networks are useful in predicting future sea level values at the global mean and regional setting and that these methods would allow us to understand how rising sea levels will progress in the future. Futher research can be done on exploring the use of univariate long short-term memory neural networks on regional sea levels which may result in the predicted values being better or slightly worse depending on whether the loss of the shared relationships between regional seas is beneficial or detrimental.
+
+# Appendix
+
+```{r eval=FALSE}
+library(keras)
+tensorflow::set_random_seed(1234)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(comment = NA)
+```
+
+```{r, echo=FALSE,message=FALSE , warning=FALSE,eval=FALSE}
+# importing packages
+library(reticulate)
+matplotlib <- import("matplotlib")
+matplotlib$use("Agg", force = TRUE)
+#install.packages("reticulate")
+library(reticulate)
+library(readr)
+library(Hmisc)
+library(corrplot)
+library(rcompanion)
+library(zoo)
+library(ggplot2)
+#reticulate::install_miniconda() # need the first time
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE,eval=FALSE}
+library(lubridate)
+turn_year_decimal_into_date <- function(dataset){
+  year_dataset <- format(date_decimal(dataset$year),"%d-%m-%Y") # creating a new dataset based on variable year for the provided dataset after changing the format for the variable year
+  return(year_dataset) # return new dataset
+}
+```
+
+```{python, echo=FALSE,message=FALSE , warning=FALSE,eval=FALSE}
+# import packages
+import pandas as pd
+import glob 
+import re
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+pd.options.mode.chained_assignment = None  # default='warn'
+# create dataframe
+dataframe = pd.DataFrame()
+# create mean function which puts all the csv files into one dataset
+def mean_function(file_name,file):
+  name = re.findall(r'([^\/]+)\.',file_name)[0] # getting rid of .csv in the file name
+  file.iloc[:,1] = file.iloc[:,[1,2,3,4]].mean(axis=1) # taking the mean of the 4 columns and putting them into one column
+  year_dataset = r.turn_year_decimal_into_date(file) # calling function mentioned earlier
+  copy_file = file.iloc[:,[0,1]] # creating a dataset based on the column that took the mean of all the columns
+  copy_file["year"] = year_dataset # created a variable year = to the year dataset
+  copy_file = copy_file.set_index('year') # change the index of the dataset to be the year variable
+  copy_file.columns.values[0] = name # changed the column name
+  copy_file.index = pd.to_datetime(copy_file.index) # changed data type of index in datatime
+  resampled_data = copy_file.resample('1M').mean() # changed the date indexes to be based on months
+  dataframe[name] = resampled_data.iloc[:,0] # create a new variable in dataframe to equal the resample_data
+#from sklearn.preprocessing import MinMaxScaler
+#from keras.models import Sequential
+#from keras.layers import Dense,LSTM
+```
+
+```{r ,echo=FALSE,message=FALSE, warning=FALSE,eval=FALSE}
+# setting wd
+# setting all the file names equaled to all the files in the wd
+file_names <- list.files(pattern=".csv") 
+# find all files with csv
+# function calls the mean function in python using files names and read_csv
+appending_datasets <- function(file_names) {
+  py$mean_function(file_names,read_csv(file_names))
+}
+# using lapply on the files names with the function appending datasets
+invisible(lapply(file_names,appending_datasets))
+# setting dataframe equal to the dataframe in python
+dataframe = py$dataframe
+# omitting the nas from the dataframe
+dataframe <- na.omit(dataframe)
+# splitting into separate dataframes
+dataframe_global <- dataframe["global-mean-sea-level"]
+cols_remove <- c("global-mean-sea-level")
+dataframe_regional <- dataframe[, !(colnames(dataframe) %in% cols_remove)]
+```
+
+```{python, results="hide",eval=FALSE}
+import numpy as np
+my_seed = 20 #5
+np.random.seed(my_seed)
+import random 
+random.seed(my_seed)
+import tensorflow as tf
+tf.random.set_seed(my_seed)
+import pandas as pd
+import matplotlib.pyplot as plt
+import math
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import Dense,LSTM
+from sklearn.metrics import mean_squared_error,mean_absolute_error,mean_absolute_percentage_error
+from keras.layers import Dropout
+from sklearn.preprocessing import StandardScaler
+# creating a dataset matrix
+def create_dataset(dataset, look_back=1):
+    dataX, dataY = [], []
+    for i in range(len(dataset) - look_back ):
+        a = dataset[i:(i + look_back):]
+        dataX.append(a)
+        dataY.append(dataset[i + look_back, :])
+    return np.array(dataX), np.array(dataY)
+
+# returns the dataset with new column names
+def returndataset(arraywithstuff,columns):
+    dataset = pd.DataFrame(columns = columns)
+    i = 0
+    for name in columns:
+        dataset[name] = arraywithstuff[:,i]
+        i = i + 1
+    return dataset
+def multivariate_lstm(dataset):
+    # create dictionaries
+    actual_dictionary = {}
+    multivariate_lstm_dictionary = {}
+    #create variable equal to the values in the dataset provided
+    values = dataset.values
+    # created a scaler between the range of -1 and 1
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    # used the scaler to transform the dataset values
+    scaled = scaler.fit_transform(values)
+    # for creating training and testing set
+    number = [0.7,0.8,0.9]
+    for n in number:
+        # create a variable equal to the number of columns in dataset
+        look_back = 24
+        # creating testing and training sets
+        train_set = scaled[:math.floor(n*len(scaled)),:]
+        test_set = scaled[math.floor(n*len(scaled)):,:]
+        # splitting training and testing sets into x and y versions
+        trainX, trainY = create_dataset(train_set, look_back)  
+        testX, testY = create_dataset(test_set, look_back)
+        # creating model
+        model = Sequential()
+        model.add(LSTM(256, input_shape=(24,24)))
+        model.add(Dense(24))
+        model.compile(loss='mae', optimizer='adam')
+        # fitting the model
+        history = model.fit(trainX, trainY, epochs=128, batch_size=64,
+        validation_data=(testX, testY))
+        # making predictions
+        trainPredict = model.predict(trainX)
+        testPredict = model.predict(testX)
+        # inversing the transformation
+        #trainPredict_extended = scaler.inverse_transform(trainPredict)
+        testPredict_extended = scaler.inverse_transform(testPredict)
+        #trainYActual_extended = scaler.inverse_transform(trainY)
+        testYActual_extended = scaler.inverse_transform(testY)
+        #trainPredict_extended = returndataset(trainPredict_extended)
+        # returning the predictions as a dataset
+        testPredict_extended = returndataset(testPredict_extended,dataset.columns)
+        #trainYActual_extended = returndataset(trainYActual_extended)
+        testYActual_extended = returndataset(testYActual_extended,dataset.columns)
+        # putting the predictions and actuals in the dictionaries
+        multivariate_lstm_dictionary[n*100] = testPredict_extended
+        actual_dictionary[n*100] = testYActual_extended
+    return multivariate_lstm_dictionary,actual_dictionary
+def lstm(X_train, y_train, X_test,sc):
+    model = Sequential()
+    #Adding the first LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 256, return_sequences = True,
+    input_shape = (X_train.shape[1], 1)))
+    model.add(Dropout(0.2))
+    # Adding a second LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 128, return_sequences = True))
+    model.add(Dropout(0.2))
+    # Adding a third LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 32, return_sequences = True))
+    model.add(Dropout(0.2))
+    # Adding a fourth LSTM layer and some Dropout regularisation
+    model.add(LSTM(units = 32))
+    model.add(Dropout(0.2))
+    # Adding the output layer
+    model.add(Dense(units = 1))
+    # Compiling the RNN
+    model.compile(optimizer = 'adam', loss = 'mean_squared_error')
+    # Fitting the RNN to the Training set
+    model.fit(X_train, y_train, epochs = 256, batch_size = 64)
+    # making predictions
+    LSTM_prediction = model.predict(X_test)
+    return model, LSTM_prediction
+def lstm_model(dataset):
+    # creating dictionaries
+    actual_dictionary = {}
+    lstm_dictionary = {}
+    lstm_dictionary[0.7*100] = {}
+    lstm_dictionary[0.8*100] = {}
+    lstm_dictionary[0.9*100] = {}
+    actual_dictionary[0.7*100] = {}
+    actual_dictionary[0.8*100] = {}
+    actual_dictionary[0.9*100] = {}
+    # going through the columns and numbers used for creating training and testing sets
+    for column in dataset.columns:
+        number = [0.7,0.8,0.9]
+        scr = []
+        for n in number:
+            # Split into train and test set
+            train_size = math.floor(n*len(dataset[column]))
+            train_set = dataset[column].head(train_size).values.reshape(-1,1)
+            test_set = dataset[column].tail(len(dataset[column]) - 
+            train_size).values.reshape(-1,1)
+            test_size = len(test_set)
+            # Scaler
+            sc = StandardScaler()
+            ts_train_scaled = sc.fit_transform(train_set)
+            # Splitting the training set further
+            X_train = []
+            y_train = []
+            y_train_stacked = []
+            for i in range(5,train_size-1): 
+                X_train.append(train_set[i-5:i,0])
+                y_train.append(train_set[i:i+1,0])
+            X_train, y_train = np.array(X_train), np.array(y_train)
+            # changing the shape of X_train
+            X_train = np.reshape(X_train, (X_train.shape[0],X_train.shape[1],1))
+            # creating a dataset used for predictions
+            inputs = pd.concat((dataset[column].head(train_size),
+            dataset[column].tail(len(dataset[column]) - train_size)),axis=0).values
+            inputs = inputs[len(inputs)-len(test_set) - 5:]
+            inputs = inputs.reshape(-1,1)
+            inputs  = sc.transform(inputs)
+            # turning the dataset into a matrix
+            X_test = []
+            for i in range(5,test_size+5-1):
+                X_test.append(inputs[i-5:i,0])
+            # creating a matrix of the X_test and changing the shape
+            X_test = np.array(X_test)
+            X_test = np.reshape(X_test, (X_test.shape[0],X_test.shape[1],1))
+            # Creates model
+            model, model_predictions = lstm(X_train, y_train, X_test,sc)
+            model.summary()
+            # creating dataset based on actual and predicted values
+            actual_pred = pd.DataFrame(columns = ['actual', 'prediction'])
+            actual_pred['actual'] = dataset[column].tail(len(dataset[column]) -
+            train_size)[0:len(model_predictions)]
+            actual_pred['prediction'] = model_predictions[:,0]
+            # putting the inverse of the predictions and actual values in the dictionaries
+            lstm_dictionary[n*100][column] = sc.inverse_transform(actual_pred['prediction'])
+            actual_dictionary[n*100][column] = actual_pred['actual']
+    return lstm_dictionary,actual_dictionary
+```
+
+```{r, results="hide",eval=FALSE}
+regional_dictionary = py$multivariate_lstm(dataframe_regional)
+global_dictionary  = py$lstm_model(dataframe_global)
+actual_regional_dictionary = regional_dictionary[2]
+regional_dictionary = regional_dictionary[1]
+actual_global_dictionary = global_dictionary[2]
+global_dictionary = global_dictionary[1]
+```
+
+```{python,eval=FALSE}
+from sklearn.metrics import mean_squared_error,mean_absolute_error,
+mean_absolute_percentage_error
+global_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_seventy_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_eighty_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+regional_ninty_table = pd.DataFrame(columns=["MAD","RMSE","MAPE"])
+for i in ["70.0","80.0","90.0"]: 
+    # creating tables based on predicted vs actuals for global mean sea level
+    global_table = global_table.append(pd.DataFrame({"MAD":mean_absolute_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"]),"RMSE":mean_squared_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"]),"MAPE":mean_absolute_percentage_error((r.actual_global_dictionary[0][i])["global-mean-sea-level"],(r.global_dictionary[0][i])["global-mean-sea-level"])}, index=[i]))
+    # creating plots based on predicted vs actuals for global mean at differet percents
+    plt.plot(((r.actual_global_dictionary[0][i])["global-mean-sea-level"].reset_index())["actual"],label = "Actual Values")
+    plt.plot((r.global_dictionary[0][i])["global-mean-sea-level"], label= "Predicted Values")
+    plt.legend(loc='best')
+    plt.xlabel('Time')
+    plt.ylabel('Sea Level Values')
+    plt.title(i + " Training Level Predicted vs Actual Values for Global Sea Level Mean")
+    plt.show()
+    plt.clf()
+# creating plots based on predicted vs actuals at different percents for tropics caribbean sea and gulf of mexico
+for name in ["tropics","caribbean-sea","gulf-of-mexico"]:
+  for i in ["70.0","80.0","90.0"]:
+    plt.plot(r.actual_regional_dictionary[0][i][name],label = "Actual Values")
+    plt.plot(r.regional_dictionary[0][i][name], label= "Predicted Values")
+    plt.xlabel('Time')
+    plt.ylabel('Sea Level Values')
+    plt.title(i + " Training Level Sea Level Predicted vs Actual Values for " + name[0:len(name)].replace("-"," ").title())
+    plt.show()
+    plt.clf()
+# creating tables based on the predicted vs actuals at different percents regional sea levels
+for i in ["70.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_seventy_table = regional_seventy_table.append(pd.DataFrame({
+      "MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],
+      r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(
+        r.actual_regional_dictionary[0][i][name],
+      r.regional_dictionary[0][i][name]),"MAPE":mean_absolute_percentage_error(
+        r.actual_regional_dictionary[0][i][name],
+        r.regional_dictionary[0][i][name])}, index=[name]))
+for i in ["80.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_eighty_table = regional_eighty_table.append(pd.DataFrame({
+      "MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],
+      r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(
+        r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name]),
+        "MAPE":mean_absolute_percentage_error(r.actual_regional_dictionary[0][i][name],
+        r.regional_dictionary[0][i][name])}, index=[name]))
+for i in ["90.0"]:
+  for name in r.dataframe_regional.columns:
+    regional_ninty_table = regional_ninty_table.append(pd.DataFrame({
+      "MAD":mean_absolute_error(r.actual_regional_dictionary[0][i][name],
+      r.regional_dictionary[0][i][name]),"RMSE":mean_squared_error(
+        r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name],
+        squared=False),"MAPE":mean_absolute_percentage_error(
+          r.actual_regional_dictionary[0][i][name],r.regional_dictionary[0][i][name])}
+          , index=[name]))
+```
+```{python,eval=FALSE}
+global_table
+regional_seventy_table
+regional_eighty_table
+regional_ninty_table
+```
